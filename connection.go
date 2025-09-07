@@ -49,6 +49,15 @@ type EventDataIn struct {
 	Duration  int64  `json:"duration"`
 }
 
+type ReplyDataIn struct {
+	Data          string `json:"data"`
+	Target        string `json:"target"`
+	Prev          string `json:"prev"`
+	Prevmessageid string `json:"prevmessageid"`
+	Extradata     string `json:"extradata"`
+	Duration      int64  `json:"duration"`
+}
+
 type EventDataOut struct {
 	*SimplifiedUser
 	Targetuserid Userid    `json:"-"`
@@ -56,6 +65,18 @@ type EventDataOut struct {
 	Data         string    `json:"data,omitempty"`
 	Extradata    string    `json:"extradata,omitempty"`
 	Entities     *Entities `json:"entities,omitempty"`
+}
+
+type ReplyDataOut struct {
+	message
+	targetuid     Userid
+	Timestamp     int64     `json:"timestamp"`
+	Nick          string    `json:"nick"`
+	Data          string    `json:"data,omitempty"`
+	Target        string    `json:"target,omitempty"`
+	Prev          string    `json:"prev,omitempty"`
+	Prevmessageid string    `json:"prevmessageid,omitempty"`
+	Entities      *Entities `json:"entities,omitempty"`
 }
 
 type BanIn struct {
@@ -168,6 +189,8 @@ func (c *Connection) readPumpText() {
 		switch name {
 		case "MSG":
 			c.OnMsg(data)
+		case "MSGREPLY":
+			c.onREPLY(data)
 		case "MUTE":
 			c.OnMute(data)
 		case "UNMUTE":
@@ -466,6 +489,62 @@ func (c *Connection) OnMsg(data []byte) {
 	TransformRares(out)
 
 	c.Broadcast("MSG", out)
+}
+
+func (c *Connection) onREPLY(data []byte) {
+	re := &ReplyDataIn{}
+	if err := Unmarshal(data, re); err != nil {
+		c.SendError("protocolerror")
+		return
+	}
+
+	if c.user == nil {
+		c.SendError("needlogin")
+		return
+	}
+
+	msg := strings.TrimSpace(re.Data)
+	if !c.canMsg(msg, false) {
+		return
+	}
+
+	// strip off /me for anti-spam purposes
+	var bmsg []byte
+	if len(msg) > 4 && msg[:4] == "/me " {
+		bmsg = []byte(strings.TrimSpace(msg[4:]))
+	} else {
+		bmsg = []byte(msg)
+	}
+
+	tsum := md5.Sum(bmsg)
+	sum := tsum[:]
+	if bytes.Equal(sum, c.user.lastmessage) {
+		c.user.delayscale++
+		c.SendError("duplicate")
+		return
+	}
+	c.user.lastmessage = sum
+
+	tuid, _ := usertools.getUseridForNick(re.Target)
+	if tuid == 0 {
+		c.SendError("notfound")
+		return
+	}
+	rout := &ReplyDataOut{
+		message:       message{event: "MSGREPLY"},
+		targetuid:     Userid(tuid),
+		Timestamp:     unixMilliTime(),
+		Nick:          c.user.nick,
+		Data:          msg,
+		Target:        re.Target,
+		Prev:          re.Prev,
+		Prevmessageid: re.Prevmessageid,
+		Entities:      entities.Extract(msg),
+	}
+	rout.message.data, _ = Marshal(rout)
+	c.Emit("MSGREPLY", rout)
+
+	hub.msgreply <- rout
 }
 
 func (c *Connection) OnPrivmsg(data []byte) {

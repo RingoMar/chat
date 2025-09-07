@@ -8,6 +8,7 @@ type Hub struct {
 	connections map[*Connection]bool
 	broadcast   chan *message
 	privmsg     chan *PrivmsgOut
+	msgreply    chan *ReplyDataOut
 	register    chan *Connection
 	unregister  chan *Connection
 	bans        chan Userid
@@ -26,6 +27,7 @@ var hub = Hub{
 	connections: make(map[*Connection]bool),
 	broadcast:   make(chan *message, BROADCASTCHANNELSIZE),
 	privmsg:     make(chan *PrivmsgOut, BROADCASTCHANNELSIZE),
+	msgreply:    make(chan *ReplyDataOut, BROADCASTCHANNELSIZE),
 	register:    make(chan *Connection, 256),
 	unregister:  make(chan *Connection),
 	bans:        make(chan Userid, 4),
@@ -91,6 +93,15 @@ func (hub *Hub) run() {
 					}
 				}
 			}
+		case r := <-hub.msgreply:
+			for c := range hub.connections {
+				if c.user != nil && c.user.id == r.targetuid {
+					if len(c.sendmarshalled) < SENDCHANNELSIZE {
+						c.sendmarshalled <- &r.message
+					}
+				}
+			}
+
 		// timeout handling
 		case t := <-pinger.C:
 			for c := range hub.connections {
