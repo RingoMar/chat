@@ -95,13 +95,10 @@ func (hub *Hub) run() {
 			}
 		case r := <-hub.msgreply:
 			for c := range hub.connections {
-				if c.user != nil && c.user.id == r.targetuid {
-					if len(c.sendmarshalled) < SENDCHANNELSIZE {
-						c.sendmarshalled <- &r.message
-					}
+				if len(c.sendmarshalled) < SENDCHANNELSIZE {
+					c.sendmarshalled <- &r.message
 				}
 			}
-
 		// timeout handling
 		case t := <-pinger.C:
 			for c := range hub.connections {
